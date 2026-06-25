@@ -73,12 +73,14 @@ st.markdown("""
 def get_engine_models():
     from realtime_engine import load_models  # lazy: only needed for live mode
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    # prefer the lighter detector on CPU deployments for a smoother live feed
-    yolo_path = None
+    # On CPU/cloud always use the lightest detector so the live feed keeps up.
+    # Use a local yolov8n.pt if present, else the bare name so ultralytics
+    # downloads the ~6 MB model on first run.
     if device == "cpu":
         cand = os.path.join(os.path.expanduser("~"), "yolov8n.pt")
-        if os.path.exists(cand):
-            yolo_path = cand
+        yolo_path = cand if os.path.exists(cand) else "yolov8n.pt"
+    else:
+        yolo_path = None  # GPU: load_models' default is fine
     yolo, clf = load_models(device, weights=os.path.join(ROOT, "runs", "best.pt"),
                             yolo_path=yolo_path)
     return device, yolo, clf
@@ -205,8 +207,9 @@ def make_config():
                          conf_floor=conf_floor)
 
 
-# Record/Upload first — it's the reliable path on a phone.
-tab_upload, tab_live = st.tabs(["📲  Record / Upload", "🎥  Live Challenge"])
+# Live real-time camera is the main experience; Record/Upload is the fallback
+# for when a phone's network won't let WebRTC connect.
+tab_live, tab_upload = st.tabs(["🎥  Live Challenge", "📲  Record / Upload"])
 
 
 # ----------------------------------------------------------------------------- #
@@ -258,8 +261,9 @@ with tab_upload:
 #  LIVE CHALLENGE  (experimental on free hosting)
 # ----------------------------------------------------------------------------- #
 with tab_live:
-    st.caption("⚠️ Experimental — needs the YOLO detector + a real-time webcam "
-               "stream, which aren't available on the free demo server.")
+    st.caption("📱 Point your phone's camera at the bottle and flip — the AI counts "
+               "good landings live. On the free server the feed runs at a few FPS; "
+               "if it won't connect, use **Record / Upload**.")
     try:
         import av  # noqa: F401
         from streamlit_webrtc import webrtc_streamer, WebRtcMode
@@ -267,13 +271,10 @@ with tab_live:
         device, yolo, clf = get_engine_models()
         cfg = make_config()
         LIVE_OK = True
-    except Exception:  # noqa: BLE001  (missing extras on the lean cloud build)
+    except Exception as e:  # noqa: BLE001
         LIVE_OK = False
-        st.info("🔴 **Live webcam mode isn't enabled on this free demo.** It needs "
-                "the YOLO detector plus a GPU + TURN server. Use the **Record / "
-                "Upload** tab instead — it runs the exact same landing AI and works "
-                "on every phone. (Live mode runs in full when the app is hosted "
-                "locally or on a GPU server.)")
+        st.warning(f"Couldn't start live mode on this host ({type(e).__name__}). "
+                   "Use the **Record / Upload** tab — same AI, works on every phone.")
 
     if LIVE_OK:
 
@@ -312,9 +313,23 @@ with tab_live:
             key=f"flip-{st.session_state.game_id}",
             mode=WebRtcMode.SENDRECV,
             video_processor_factory=FlipProcessor,
-            media_stream_constraints={"video": True, "audio": False},
+            # rear camera + modest resolution so the CPU detector keeps up on a phone
+            media_stream_constraints={
+                "video": {"facingMode": {"ideal": "environment"},
+                          "width": {"ideal": 640}, "height": {"ideal": 480}},
+                "audio": False},
+            # STUN finds the public IP; TURN relays when the phone's carrier NAT
+            # blocks a direct peer connection (common on cellular). Free public
+            # OpenRelay TURN keeps the demo connecting without a paid account.
             rtc_configuration={"iceServers": [
-                {"urls": ["stun:stun.l.google.com:19302"]}]},
+                {"urls": ["stun:stun.l.google.com:19302"]},
+                {"urls": ["turn:openrelay.metered.ca:80"],
+                 "username": "openrelayproject", "credential": "openrelayproject"},
+                {"urls": ["turn:openrelay.metered.ca:443"],
+                 "username": "openrelayproject", "credential": "openrelayproject"},
+                {"urls": ["turn:openrelay.metered.ca:443?transport=tcp"],
+                 "username": "openrelayproject", "credential": "openrelayproject"},
+            ]},
             async_processing=True,
         )
         st.info("Tip: a low camera angle (near floor level) matches the training "
