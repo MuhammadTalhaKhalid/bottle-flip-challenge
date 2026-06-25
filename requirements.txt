@@ -1,5 +1,9 @@
-# Runtime deps for the Streamlit app. Streamlit Community Cloud reads this file.
-# CPU-only torch keeps the install small/fast and fits the free 1 GB tier.
+# Runtime deps for the Streamlit app (Streamlit Community Cloud reads this file).
+# Lean by design for the free 1 GB tier: CPU-only torch + headless opencv (no libGL,
+# no apt packages needed). The live-webcam extras (ultralytics/streamlit-webrtc/av)
+# are intentionally omitted here — they're only used by the experimental Live tab,
+# which needs a GPU + TURN server and isn't supported on the free host. The client's
+# Record/Upload flow uses only the lightweight landing classifier below.
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch>=2.6
 torchvision>=0.21
@@ -7,6 +11,3 @@ numpy>=1.26
 scikit-learn>=1.4
 opencv-python-headless>=4.11
 streamlit>=1.40
-streamlit-webrtc>=0.47
-av>=12.0
-ultralytics>=8.3

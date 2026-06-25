@@ -258,21 +258,24 @@ with tab_upload:
 #  LIVE CHALLENGE  (experimental on free hosting)
 # ----------------------------------------------------------------------------- #
 with tab_live:
-    st.caption("⚠️ Experimental on the free server (CPU-only, shared). If the live "
-               "feed won't start or lags, use **Record / Upload** — it's just as "
-               "accurate and works on every phone.")
+    st.caption("⚠️ Experimental — needs the YOLO detector + a real-time webcam "
+               "stream, which aren't available on the free demo server.")
     try:
         import av  # noqa: F401
         from streamlit_webrtc import webrtc_streamer, WebRtcMode
-        WEBRTC_OK = True
-    except Exception as e:  # noqa: BLE001
-        WEBRTC_OK = False
-        st.error(f"Live mode needs streamlit-webrtc (`pip install streamlit-webrtc av`). {e}")
-
-    if WEBRTC_OK:
+        from realtime_engine import FlipSession  # pulls in ultralytics/YOLO lazily
         device, yolo, clf = get_engine_models()
         cfg = make_config()
-        from realtime_engine import FlipSession
+        LIVE_OK = True
+    except Exception:  # noqa: BLE001  (missing extras on the lean cloud build)
+        LIVE_OK = False
+        st.info("🔴 **Live webcam mode isn't enabled on this free demo.** It needs "
+                "the YOLO detector plus a GPU + TURN server. Use the **Record / "
+                "Upload** tab instead — it runs the exact same landing AI and works "
+                "on every phone. (Live mode runs in full when the app is hosted "
+                "locally or on a GPU server.)")
+
+    if LIVE_OK:
 
         if "game_id" not in st.session_state:
             st.session_state.game_id = 0
