@@ -1,0 +1,50 @@
+* { box-sizing: border-box; }
+:root { --bg: #0d1020; --card: #161b35; --line: #2a3566; --muted: #9aa4c4; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: radial-gradient(900px 500px at 50% -10%, #1b2440 0%, #0d1020 60%);
+  color: #e6e9f5; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  min-height: 100dvh; padding: env(safe-area-inset-top) 14px 28px;
+}
+.hero { text-align: center; padding: 14px 0 6px; }
+.hero h1 {
+  margin: 0; font-size: 1.9rem; font-weight: 800;
+  background: linear-gradient(90deg, #6ee7ff, #a78bfa, #fef08a);
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+.hero p { color: var(--muted); margin: .3rem auto 0; max-width: 30rem; font-size: .95rem; }
+main { max-width: 560px; margin: 0 auto; }
+
+.stage {
+  position: relative; width: 100%; aspect-ratio: 4 / 3; background: #000;
+  border-radius: 18px; overflow: hidden; border: 1px solid var(--line);
+  box-shadow: 0 10px 30px rgba(0,0,0,.4);
+}
+#cam { width: 100%; height: 100%; object-fit: cover; display: block; }
+#hud { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.fps {
+  position: absolute; top: 8px; right: 10px; font-size: .72rem; color: #cdd6ff;
+  background: rgba(0,0,0,.4); padding: 2px 8px; border-radius: 999px;
+}
+
+.status { text-align: center; color: var(--muted); min-height: 1.4em; margin: 12px 0; }
+
+.controls { display: flex; gap: 10px; }
+.controls button {
+  flex: 1; padding: .85rem 1rem; font-size: 1.05rem; font-weight: 700;
+  border-radius: 14px; border: 1px solid var(--line); background: var(--card);
+  color: #e6e9f5; cursor: pointer;
+}
+.controls button.primary {
+  background: linear-gradient(90deg, #6d5efc, #a78bfa); border: none; color: #fff;
+}
+.controls button:disabled { opacity: .5; }
+
+.settings { margin: 16px 0 0; background: var(--card); border: 1px solid var(--line);
+  border-radius: 14px; padding: 10px 14px; }
+.settings summary { cursor: pointer; font-weight: 600; }
+.settings label { display: block; margin: 14px 0 4px; color: var(--muted); font-size: .9rem; }
+.settings select, .settings input[type=range] { width: 100%; margin-top: 6px; }
+.tips { margin-top: 14px; color: var(--muted); font-size: .9rem; line-height: 1.6; }
+
+.foot { color: #6b73a0; font-size: .78rem; text-align: center; margin: 20px 0 0; line-height: 1.5; }
