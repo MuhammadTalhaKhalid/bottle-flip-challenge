@@ -1,0 +1,25 @@
+# --- large / regenerable data (NEVER commit: ~2 GB) ---
+data/videos/
+data/cache/
+data/_corrupt/
+test_clips/
+*.mp4
+*.mov
+*.avi
+*.webm
+
+# --- python junk ---
+__pycache__/
+*.pyc
+*.pyo
+.ipython/
+.streamlit/secrets.toml
+
+# --- model artifacts: keep ONLY the trained checkpoint the app needs ---
+runs/*
+!runs/best.pt
+
+# --- scratch / notes not needed for deployment ---
+last_chat.txt
+MEETING_PREP.txt
+yolov8*.pt

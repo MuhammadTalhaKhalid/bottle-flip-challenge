@@ -1,0 +1,14 @@
+# Keep the build context small — exclude data, videos, and run artifacts,
+# but DO ship the trained classifier weights (runs/best.pt).
+data/
+test_clips/
+_concat/
+_inspect/
+__pycache__/
+*.pyc
+.git/
+last_chat*.txt
+
+# everything under runs/ except the trained weights
+runs/*
+!runs/best.pt
