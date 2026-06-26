@@ -1,13 +1,13 @@
-# Runtime deps for the Streamlit app (Streamlit Community Cloud reads this file).
-# CPU-only torch keeps install small/fast for the free tier. The live-webcam path
-# (real-time YOLO + WebRTC) needs ultralytics + streamlit-webrtc + av.
---extra-index-url https://download.pytorch.org/whl/cpu
+# Training / evaluation / ONNX-export deps.
+# Install the torch build for your platform first (CUDA from pytorch.org, or CPU):
+#   pip install torch torchvision
 torch>=2.6
 torchvision>=0.21
 numpy>=1.26
 scikit-learn>=1.4
-opencv-python-headless>=4.11
-streamlit>=1.40
-streamlit-webrtc>=0.47
-av>=12.0
+opencv-python>=4.11
 ultralytics>=8.3
+
+# ONNX export for the in-browser app (src/export_onnx.py)
+onnx>=1.16
+onnxruntime>=1.18

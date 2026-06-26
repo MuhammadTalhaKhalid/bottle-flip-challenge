@@ -13,7 +13,6 @@ __pycache__/
 *.pyc
 *.pyo
 .ipython/
-.streamlit/secrets.toml
 
 # --- model artifacts: keep ONLY the trained checkpoint the app needs ---
 runs/*

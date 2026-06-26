@@ -37,9 +37,9 @@ Full numbers: `runs/test_report.txt`. Per-clip predictions: `runs/test_predictio
 
 ## Approach
 
-The earlier prototype (`bottle_flip_counter.py`) used a pretrained COCO bottle
-detector + a hand-tuned aspect-ratio state machine. It hit a ceiling: a "tall" box
-can't tell upright from upside-down, and detection drops out during fast flight.
+The earlier prototype used a pretrained COCO bottle detector + a hand-tuned
+aspect-ratio state machine. It hit a ceiling: a "tall" box can't tell upright from
+upside-down, and detection drops out during fast flight.
 
 This version **learns the outcome from the labeled clips** instead of hand-tuning
 thresholds:
@@ -54,30 +54,28 @@ thresholds:
 
 ## Apps — play / test it live
 
-Two front-ends serve the same trained model (`runs/best.pt`):
+**Primary deliverable — the in-browser PWA (`docs/`).** Real-time bottle-flip
+counting that runs **entirely on the phone**: YOLOv8n bottle detection + the
+MobileNetV3 landing classifier execute in the browser via **ONNX Runtime Web**
+(WebGPU, with a WASM fallback). No server, no upload — the camera feed never
+leaves the device. It's a installable PWA (offline after first load) and is the
+exact match for the client's requirement (live, on-device, phone-first).
+
+Deployed via GitHub Pages from `docs/` →
+**https://muhammadtalhakhalid.github.io/bottle-flip-challenge/**
+(open on a phone, allow the camera, and flip). `docs/engine.js` is a faithful
+on-device port of `src/realtime_engine.py` (same setup gate, throw detection, and
+16-frame temporal judgement), so the browser counts flips with identical logic to
+the Python system.
+
+**Optional server API (`api/` + `Dockerfile`).** A FastAPI + WebSocket service
+wrapping the same engine, for hosts that prefer server-side inference (e.g. a GPU
+backend). Containerised and self-contained:
 
 ```bash
-pip install -r requirements-app.txt        # (install torch/torchvision first)
-
-# 1) Interactive web app — webcam challenge + upload-a-clip
-python run_app.py streamlit                 # -> http://localhost:8501
-
-# 2) FastAPI + WebSocket service (for the Lovable / browser front-end)
-python run_app.py api                       # -> http://localhost:8000  (/ , /health, /ws)
+docker build -t bottle-flip-api .
+docker run -p 8000:8000 bottle-flip-api      # -> http://localhost:8000  (/ , /health, /ws)
 ```
-
-**`streamlit_app.py`** is the player-facing app:
-- **🎥 Live Challenge** — opens the webcam (`streamlit-webrtc`), runs YOLOv8 bottle
-  detection + the landing classifier on every frame, and draws a live HUD (flip
-  count, tries left, READY gate, SUCCESS/FAIL flash, final score) straight onto the
-  video. Reuses `src/realtime_engine.py` — identical logic to the API.
-- **📤 Upload a Flip** — upload a recorded clip, get an animated verdict + confidence.
-  Works on hosts where live webcam streaming is blocked (e.g. Streamlit Cloud).
-
-**Deploying:** the Streamlit app runs anywhere Python does; the live (webcam) mode
-needs a STUN/TURN reachable network (a public STUN is preconfigured). On CPU hosts it
-auto-prefers `yolov8n.pt` for a smoother feed. The FastAPI service is containerised
-(`Dockerfile`) and is what the Lovable phone front-end connects to over WebSocket.
 
 ## Layout
 
@@ -97,15 +95,18 @@ src/
   infer.py           classify a clip / folder (+ session count)
   export_onnx.py     export to ONNX for the browser
   realtime_engine.py stateful live session engine (gate + flip segmentation + judge)
-streamlit_app.py     interactive web app (live webcam challenge + upload-a-clip)
-run_app.py           launcher: `python run_app.py streamlit | api`
+docs/                in-browser PWA (the deliverable) — served by GitHub Pages
+  index.html, styles.css, app.js   camera + HUD + UI wiring
+  engine.js          on-device port of realtime_engine.py (FlipSession)
+  yolo.js            YOLOv8n bottle detection in onnxruntime-web
+  models/            yolov8n.onnx + flip_classifier.onnx (fp16, ~8 MB)
+  sw.js, manifest.webmanifest, icons/   PWA install + offline cache
 api/
   server.py          FastAPI + WebSocket service wrapping realtime_engine
   requirements.txt   API service deps
-requirements-app.txt deps for both web apps
 runs/
   best.pt            trained checkpoint
-  flip_classifier.onnx  browser-deployable model (~15 MB)
+  flip_classifier.onnx  full-precision ONNX export
   test_report.txt, test_predictions.csv, train_log.csv
 ```
 
