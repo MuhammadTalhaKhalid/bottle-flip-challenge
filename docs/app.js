@@ -196,7 +196,7 @@ async function startCamera() {
   setStatus("Requesting camera…");
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: "environment" },
+      video: { facingMode: "user",  // ← FRONT CAMERA ONLY,
                width: { ideal: 640 }, height: { ideal: 480 } },
       audio: false,
     });
