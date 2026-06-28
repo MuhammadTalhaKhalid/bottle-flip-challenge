@@ -9,21 +9,21 @@
  */
 export const BOTTLE_CLASS = 39;
 export const SIZE = 160;
-export const NUM_FRAMES = 16;
+export const NUM_FRAMES = 8;   // ← REDUCED from 16 for speed
 
 export const DEFAULT_CONFIG = {
   maxTries: 10,
   gateMode: "soft",        // "hard" | "soft" | "hard_calibrate"
   requireThrow: true,
-  confFloor: 0.60,         // min p to call a SUCCESS
-  minBoxFrac: 0.20,
-  maxBoxFrac: 0.80,
-  centerTol: 0.32,
-  readySecs: 0.8,
-  settleSecs: 0.55,
-  throwSpeed: 28.0,        // px/frame peak speed => a real throw
-  lookbackSecs: 1.8,
-  yoloConf: 0.20,
+  confFloor: 0.50,         // ← LOWER from 0.60 for faster decisions
+  minBoxFrac: 0.15,        // ← LOWER from 0.20 (easier to detect)
+  maxBoxFrac: 0.85,        // ← HIGHER from 0.80 (more tolerant)
+  centerTol: 0.40,         // ← HIGHER from 0.32 (easier to center)
+  readySecs: 0.3,          // ← REDUCED from 0.8 (faster setup)
+  settleSecs: 0.25,        // ← REDUCED from 0.55 (faster judgement)
+  throwSpeed: 20.0,        // ← REDUCED from 28.0 (easier to detect throw)
+  lookbackSecs: 1.2,       // ← REDUCED from 1.8 (less frames to collect)
+  yoloConf: 0.15,          // ← REDUCED from 0.20 (faster detection)
 };
 
 function pushCapped(arr, v, max) {
@@ -157,7 +157,7 @@ export class FlipSession {
       const motion = this._motion(center);
       pushCapped(this.winMotion, motion, this.L);
       pushCapped(this.winDetected, 1, this.L);
-      if (motion < 7.0) {
+      if (motion < 5.0) {   // ← LOWER from 7.0 (faster stillness detection)
         this.stillRun += 1;
       } else {
         if (this.judged || this.throwStart === null) this.throwStart = frameIdx;

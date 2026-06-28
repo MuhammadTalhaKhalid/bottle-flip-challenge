@@ -196,8 +196,11 @@ async function startCamera() {
   setStatus("Requesting camera…");
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "user",
-               width: { ideal: 640 }, height: { ideal: 480 } },
+      video: { 
+        facingMode: { exact: "user" },  // ← FORCE FRONT CAMERA
+        width: { ideal: 480, max: 640 },  // ← LOWER RESOLUTION for speed
+        height: { ideal: 360, max: 480 }
+      },
       audio: false,
     });
     els.video.srcObject = stream;
@@ -206,7 +209,7 @@ async function startCamera() {
     newGame();
     running = true;
     els.start.textContent = "⏹ Stop";
-    setStatus("Live — point at the bottle and flip!");
+    setStatus("Live — front camera active! Flip fast!");
     requestAnimationFrame(tick);
   } catch (e) {
     setStatus("Camera blocked. Allow camera access and reload. " + e.message);
