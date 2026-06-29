@@ -192,17 +192,29 @@ function newGame() {
   hctx.clearRect(0, 0, els.hud.width, els.hud.height);
 }
 
+// Front (selfie) camera is what the client wants. Try to force it with `exact`;
+// if a browser refuses that constraint, fall back to `ideal` so the camera still
+// opens (front-preferred) instead of hard-failing.
+async function getFrontStream() {
+  const size = { width: { ideal: 480, max: 640 }, height: { ideal: 360, max: 480 } };
+  try {
+    return await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { exact: "user" }, ...size }, audio: false,
+    });
+  } catch (e) {
+    if (e && (e.name === "OverconstrainedError" || e.name === "NotFoundError")) {
+      return await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "user" }, ...size }, audio: false,
+      });
+    }
+    throw e;
+  }
+}
+
 async function startCamera() {
   setStatus("Requesting camera…");
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { 
-        facingMode: { exact: "user" },  // ← FORCE FRONT CAMERA
-        width: { ideal: 480, max: 640 },  // ← LOWER RESOLUTION for speed
-        height: { ideal: 360, max: 480 }
-      },
-      audio: false,
-    });
+    const stream = await getFrontStream();
     els.video.srcObject = stream;
     await els.video.play();
     fitHud();

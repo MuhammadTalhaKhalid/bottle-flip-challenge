@@ -1,7 +1,7 @@
 /* sw.js — cache the app shell + models so it installs as a PWA and runs offline
  * after the first load. Bump CACHE to invalidate when files change.
  */
-const CACHE = "bottleflip-v2";   // ← Force browser to reload new files
+const CACHE = "bottleflip-v3";   // ← Force browser to reload new files
 const ASSETS = [
   "./", "./index.html", "./styles.css", "./app.js", "./engine.js", "./yolo.js",
   "./manifest.webmanifest",

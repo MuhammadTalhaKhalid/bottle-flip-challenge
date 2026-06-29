@@ -9,13 +9,17 @@
  */
 export const BOTTLE_CLASS = 39;
 export const SIZE = 160;
-export const NUM_FRAMES = 8;   // ← REDUCED from 16 for speed
+export const NUM_FRAMES = 16;  // MUST stay 16: the ONNX classifier's temporal axis
+                               // is fixed at 16 (only 'batch' is dynamic). Feeding 8
+                               // throws a shape mismatch and no landing ever classifies.
 
 export const DEFAULT_CONFIG = {
   maxTries: 10,
   gateMode: "soft",        // "hard" | "soft" | "hard_calibrate"
   requireThrow: true,
-  confFloor: 0.50,         // ← LOWER from 0.60 for faster decisions
+  confFloor: 0.60,         // success threshold (accuracy, not speed). Live app
+                           // overrides this from the UI slider; keep at the
+                           // validated 0.60 — lower = more false SUCCESS.
   minBoxFrac: 0.15,        // ← LOWER from 0.20 (easier to detect)
   maxBoxFrac: 0.85,        // ← HIGHER from 0.80 (more tolerant)
   centerTol: 0.40,         // ← HIGHER from 0.32 (easier to center)
