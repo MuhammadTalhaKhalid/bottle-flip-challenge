@@ -28,7 +28,13 @@
 
     <div class="controls">
       <button id="startBtn" class="primary">▶ Start camera</button>
-      <button id="newGameBtn">🔄 New Game</button>
+      <select id="timerSel" class="timerSel" aria-label="Challenge duration">
+        <option value="15">15s</option>
+        <option value="30" selected>30s</option>
+        <option value="45">45s</option>
+        <option value="60">60s</option>
+      </select>
+      <button id="newGameBtn">🏁 Start Challenge</button>
     </div>
 
     <details class="settings">
@@ -43,15 +49,12 @@
       <label>Success confidence floor: <span id="confVal">0.60</span>
         <input id="confFloor" type="range" min="0.40" max="0.90" step="0.05" value="0.60" />
       </label>
-      <label>Tries per game: <span id="triesVal">10</span>
-        <input id="tries" type="range" min="1" max="30" step="1" value="10" />
-      </label>
       <div class="tips">
         <b>How to play</b><br>
-        1. Hold the phone low, bottle in view (low angle = most accurate).<br>
-        2. Flip! A good landing = bottle upright &amp; still.<br>
-        3. A try only counts if the bottle actually flew — placing it doesn't.<br>
-        4. Beat your high score 🏆
+        1. Pick a time (15/30/45/60s) and tap <b>Start Challenge</b>.<br>
+        2. Hold the phone low, bottle in view (low angle = most accurate).<br>
+        3. Flip! A good landing = bottle upright &amp; still.<br>
+        4. Flip as many as you can before the timer hits 0 — beat your high score 🏆
       </div>
     </details>
 

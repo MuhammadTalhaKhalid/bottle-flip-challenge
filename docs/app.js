@@ -14,8 +14,7 @@ const els = {
   gate: document.getElementById("gateMode"),
   conf: document.getElementById("confFloor"),
   confVal: document.getElementById("confVal"),
-  tries: document.getElementById("tries"),
-  triesVal: document.getElementById("triesVal"),
+  timerSel: document.getElementById("timerSel"),
   fps: document.getElementById("fpsTag"),
 };
 const hctx = els.hud.getContext("2d");
@@ -35,6 +34,8 @@ let session = null;          // FlipSession
 let running = false, frameIdx = 0, busy = false;
 let flash = null, flashLeft = 0;
 let lastT = 0, fpsEMA = ASSUMED_FPS;
+// timed-challenge state: a countdown round that ends and shows a final score.
+let challenge = { active: false, finished: false, endsAt: 0, remaining: 30, duration: 30, finalFlips: 0 };
 
 function setStatus(msg) { els.status.textContent = msg; }
 
@@ -43,7 +44,7 @@ function currentConfig() {
     ...DEFAULT_CONFIG,
     gateMode: els.gate.value,
     confFloor: parseFloat(els.conf.value),
-    maxTries: parseInt(els.tries.value, 10),
+    maxTries: 9999,   // timed mode: the countdown ends the round, not a tries cap
   };
 }
 
@@ -88,6 +89,12 @@ function fitHud() {
   const r = els.video.getBoundingClientRect();
   els.hud.width = r.width; els.hud.height = r.height;
 }
+function fmtTime(s) {
+  s = Math.max(0, Math.ceil(s));
+  const m = Math.floor(s / 60), ss = s % 60;
+  return m > 0 ? `${m}:${ss.toString().padStart(2, "0")}` : `${ss}s`;
+}
+
 function drawHud(out) {
   const W = els.hud.width, H = els.hud.height;
   hctx.clearRect(0, 0, W, H);
@@ -101,32 +108,38 @@ function drawHud(out) {
     hctx.strokeStyle = out.gateOk ? "#50dc78" : "#fac83c";
     hctx.strokeRect(x1 * sx, y1 * sy, (x2 - x1) * sx, (y2 - y1) * sy);
   }
-  // top scoreboard bar
+
+  // top scoreboard bar: FLIPS (left) + countdown (right)
   hctx.fillStyle = "rgba(10,8,15,0.45)";
   hctx.fillRect(0, 0, W, 0.13 * H);
   hctx.textBaseline = "alphabetic";
+  hctx.textAlign = "left";
   hctx.fillStyle = "#7df9c0";
   hctx.font = `800 ${Math.round(0.075 * H)}px system-ui, sans-serif`;
   hctx.fillText(`FLIPS ${out.flips}`, 14, 0.092 * H);
-  hctx.fillStyle = "#fff";
-  hctx.font = `600 ${Math.round(0.04 * H)}px system-ui, sans-serif`;
-  hctx.fillText(`Tries left: ${out.triesLeft}`, W * 0.52, 0.06 * H);
-  hctx.fillStyle = "#c8c8c8";
-  hctx.font = `500 ${Math.round(0.033 * H)}px system-ui, sans-serif`;
-  hctx.fillText(`state: ${out.state}`, W * 0.52, 0.108 * H);
 
-  // setup guidance
-  if (out.message && !out.finished) {
-    const ready = out.message === "READY";
-    hctx.fillStyle = ready ? "#50dc78" : "#fac83c";
-    hctx.font = `800 ${Math.round(0.06 * H)}px system-ui, sans-serif`;
+  const rem = challenge.active ? challenge.remaining : challenge.duration;
+  const low = challenge.active && rem <= 5;
+  hctx.save();
+  if (low) hctx.globalAlpha = 0.45 + 0.55 * Math.abs(Math.sin(performance.now() / 140));
+  hctx.fillStyle = low ? "#fb5b6e" : "#ffffff";
+  hctx.font = `800 ${Math.round(0.07 * H)}px system-ui, sans-serif`;
+  hctx.textAlign = "right";
+  hctx.fillText(`⏱ ${fmtTime(rem)}`, W - 14, 0.092 * H);
+  hctx.restore();
+  hctx.textAlign = "left";
+
+  // setup / preview guidance
+  if (out.message && !challenge.finished) {
+    hctx.fillStyle = out.gateOk ? "#50dc78" : "#fac83c";
+    hctx.font = `800 ${Math.round(0.055 * H)}px system-ui, sans-serif`;
     hctx.textAlign = "center";
-    hctx.fillText(out.message, W / 2, 0.32 * H);
+    hctx.fillText(out.message, W / 2, 0.30 * H);
     hctx.textAlign = "left";
   }
 
   // verdict flash
-  if (flash && flashLeft > 0) {
+  if (flash && flashLeft > 0 && !challenge.finished) {
     const [text, p] = flash;
     const good = text === "SUCCESS";
     hctx.fillStyle = "rgba(10,8,15,0.5)";
@@ -142,17 +155,23 @@ function drawHud(out) {
     flashLeft -= 1;
   }
 
-  // finished overlay
-  if (out.finished) {
-    hctx.fillStyle = "rgba(8,6,16,0.55)";
+  // time-up final overlay
+  if (challenge.finished) {
+    hctx.fillStyle = "rgba(8,6,16,0.62)";
     hctx.fillRect(0, 0, W, H);
-    hctx.fillStyle = "#78f0ff";
-    hctx.font = `800 ${Math.round(0.1 * H)}px system-ui, sans-serif`;
     hctx.textAlign = "center";
-    hctx.fillText(`FINAL  ${out.flips} / ${session.cfg.maxTries}`, W / 2, 0.48 * H);
+    hctx.fillStyle = "#fde68a";
+    hctx.font = `800 ${Math.round(0.058 * H)}px system-ui, sans-serif`;
+    hctx.fillText("⏱ TIME'S UP", W / 2, 0.34 * H);
+    hctx.fillStyle = "#78f0ff";
+    hctx.font = `800 ${Math.round(0.17 * H)}px system-ui, sans-serif`;
+    hctx.fillText(`${challenge.finalFlips}`, W / 2, 0.55 * H);
     hctx.fillStyle = "#fff";
-    hctx.font = `600 ${Math.round(0.04 * H)}px system-ui, sans-serif`;
-    hctx.fillText("Tap New Game to play again", W / 2, 0.56 * H);
+    hctx.font = `700 ${Math.round(0.05 * H)}px system-ui, sans-serif`;
+    hctx.fillText(challenge.finalFlips === 1 ? "flip" : "flips", W / 2, 0.63 * H);
+    hctx.fillStyle = "#cbd5ff";
+    hctx.font = `600 ${Math.round(0.042 * H)}px system-ui, sans-serif`;
+    hctx.fillText("Tap 🏁 Play Again", W / 2, 0.75 * H);
     hctx.textAlign = "left";
   }
 }
@@ -164,14 +183,36 @@ async function tick() {
   if (!vw || busy) { requestAnimationFrame(tick); return; }
   busy = true;
   try {
-    const { bottles, nBottles } = await detectBottles(
-      yoloSession, els.video, vw, vh, session.cfg.yoloConf);
-    const pick = bottles.length ? bottles[0] : null;
-    session.pushSmall(frameIdx, captureSmall(vw, vh));
-    const out = await session.processFrame(pick, nBottles, vw, vh, frameIdx);
-    if (out.verdict) { flash = [out.verdict.verdict, out.verdict.pSuccess]; flashLeft = Math.round(1.5 * fpsEMA); }
-    drawHud(out);
-    frameIdx += 1;
+    // advance the countdown; end the round at zero
+    if (challenge.active) {
+      challenge.remaining = Math.max(0, (challenge.endsAt - performance.now()) / 1000);
+      if (challenge.remaining <= 0) finishChallenge();
+    }
+
+    if (challenge.finished) {
+      drawHud({ flips: challenge.finalFlips, state: "DONE", message: "",
+                gateOk: false, bottleBox: null });
+    } else {
+      const { bottles, nBottles } = await detectBottles(
+        yoloSession, els.video, vw, vh, session.cfg.yoloConf);
+      const pick = bottles.length ? bottles[0] : null;
+      const box = pick ? pick.box.map((v) => Math.round(v)) : null;
+
+      if (challenge.active) {
+        session.pushSmall(frameIdx, captureSmall(vw, vh));
+        const out = await session.processFrame(pick, nBottles, vw, vh, frameIdx);
+        if (out.verdict) {
+          flash = [out.verdict.verdict, out.verdict.pSuccess];
+          flashLeft = Math.round(1.2 * fpsEMA);
+        }
+        drawHud(out);
+        frameIdx += 1;
+      } else {
+        // camera live, round not started yet — show preview box + prompt
+        drawHud({ flips: 0, state: "READY", gateOk: !!pick, bottleBox: box,
+                  message: pick ? "Tap 🏁 Start Challenge" : "Show the bottle" });
+      }
+    }
 
     // fps estimate
     const now = performance.now();
@@ -190,6 +231,28 @@ function newGame() {
   session = new FlipSession(ASSUMED_FPS, currentConfig(), classifyLanding);
   frameIdx = 0; flash = null; flashLeft = 0;
   hctx.clearRect(0, 0, els.hud.width, els.hud.height);
+}
+
+// Begin (or restart) a timed round: fresh score + a countdown that ends it.
+function startChallenge() {
+  if (!running) { setStatus("Start the camera first."); return; }
+  newGame();
+  challenge.duration = parseInt(els.timerSel.value, 10);
+  challenge.remaining = challenge.duration;
+  challenge.endsAt = performance.now() + challenge.duration * 1000;
+  challenge.finalFlips = 0;
+  challenge.active = true;
+  challenge.finished = false;
+  els.newgame.textContent = "🔄 Restart";
+  setStatus(`Go! ${challenge.duration}s — flip as many as you can!`);
+}
+
+function finishChallenge() {
+  challenge.active = false;
+  challenge.finished = true;
+  challenge.finalFlips = session ? session.flips : 0;
+  els.newgame.textContent = "🏁 Play Again";
+  setStatus(`Time! Final score: ${challenge.finalFlips} flip${challenge.finalFlips === 1 ? "" : "s"}.`);
 }
 
 // Front (selfie) camera is what the client wants. Try to force it with `exact`;
@@ -219,9 +282,13 @@ async function startCamera() {
     await els.video.play();
     fitHud();
     newGame();
+    challenge.active = false; challenge.finished = false;
+    challenge.duration = parseInt(els.timerSel.value, 10);
+    challenge.remaining = challenge.duration;
     running = true;
     els.start.textContent = "⏹ Stop";
-    setStatus("Live — front camera active! Flip fast!");
+    els.newgame.textContent = "🏁 Start Challenge";
+    setStatus("Front camera live — frame the bottle, then tap Start Challenge.");
     requestAnimationFrame(tick);
   } catch (e) {
     setStatus("Camera blocked. Allow camera access and reload. " + e.message);
@@ -230,10 +297,13 @@ async function startCamera() {
 
 function stopCamera() {
   running = false;
+  challenge.active = false; challenge.finished = false;
   const s = els.video.srcObject;
   if (s) s.getTracks().forEach((t) => t.stop());
   els.video.srcObject = null;
   els.start.textContent = "▶ Start camera";
+  els.newgame.textContent = "🏁 Start Challenge";
+  hctx.clearRect(0, 0, els.hud.width, els.hud.height);
   setStatus("Stopped.");
 }
 
@@ -258,16 +328,16 @@ async function loadModels() {
 
 // ---- UI wiring ----
 els.start.addEventListener("click", () => (running ? stopCamera() : startCamera()));
-els.newgame.addEventListener("click", () => { if (session) newGame(); });
+els.newgame.addEventListener("click", startChallenge);
 els.conf.addEventListener("input", () => {
   els.confVal.textContent = parseFloat(els.conf.value).toFixed(2);
   if (session) session.cfg.confFloor = parseFloat(els.conf.value);
 });
-els.tries.addEventListener("input", () => {
-  els.triesVal.textContent = els.tries.value;
-  if (session) session.cfg.maxTries = parseInt(els.tries.value, 10);
+els.timerSel.addEventListener("change", () => {
+  challenge.duration = parseInt(els.timerSel.value, 10);
+  if (!challenge.active) challenge.remaining = challenge.duration;
 });
-els.gate.addEventListener("change", () => { if (session) newGame(); });
+els.gate.addEventListener("change", () => { if (session && !challenge.active) newGame(); });
 window.addEventListener("resize", () => { if (running) fitHud(); });
 
 els.start.disabled = true;
