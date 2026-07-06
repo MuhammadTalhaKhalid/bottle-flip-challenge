@@ -20,14 +20,22 @@ export const DEFAULT_CONFIG = {
   confFloor: 0.60,         // success threshold (accuracy, not speed). Live app
                            // overrides this from the UI slider; keep at the
                            // validated 0.60 — lower = more false SUCCESS.
-  minBoxFrac: 0.15,        // ← LOWER from 0.20 (easier to detect)
-  maxBoxFrac: 0.85,        // ← HIGHER from 0.80 (more tolerant)
-  centerTol: 0.40,         // ← HIGHER from 0.32 (easier to center)
-  readySecs: 0.3,          // ← REDUCED from 0.8 (faster setup)
-  settleSecs: 0.25,        // ← REDUCED from 0.55 (faster judgement)
-  throwSpeed: 20.0,        // ← REDUCED from 28.0 (easier to detect throw)
-  lookbackSecs: 1.2,       // ← REDUCED from 1.8 (less frames to collect)
-  yoloConf: 0.15,          // ← REDUCED from 0.20 (faster detection)
+  // The values below are RESTORED to the validated realtime_engine.py config
+  // (97.96% acc). DeepSeek's "speed optimization" loosened them, which shrank
+  // the [throw→landing] window fed to the temporal classifier so it saw mostly
+  // mid-air/tumbling frames and read every successful landing as FAIL. These
+  // constants define WHICH frames get classified — they are accuracy knobs, not
+  // free speed knobs. Do not loosen them again to chase latency.
+  minBoxFrac: 0.20,        // framing gate (bottle box height / frame height)
+  maxBoxFrac: 0.80,
+  centerTol: 0.32,         // |bottle_cx - 0.5| must be <= this
+  readySecs: 0.8,          // steady-in-zone hold to pass the setup gate
+  settleSecs: 0.55,        // stillness that means "at rest" — MUST stay ~0.55 so
+                           // the classify window keeps enough settled-upright
+                           // frames; shortening this is what caused all-FAIL.
+  throwSpeed: 28.0,        // px/frame peak speed => a real throw
+  lookbackSecs: 1.8,       // window collected for the landing classifier
+  yoloConf: 0.20,          // bottle-detection confidence
 };
 
 function pushCapped(arr, v, max) {
@@ -161,7 +169,9 @@ export class FlipSession {
       const motion = this._motion(center);
       pushCapped(this.winMotion, motion, this.L);
       pushCapped(this.winDetected, 1, this.L);
-      if (motion < 5.0) {   // ← LOWER from 7.0 (faster stillness detection)
+      if (motion < 7.0) {   // validated stillness threshold (realtime_engine.py).
+                            // DeepSeek lowered this to 5.0, making handheld jitter
+                            // read as "not still" and skewing the landing window.
         this.stillRun += 1;
       } else {
         if (this.judged || this.throwStart === null) this.throwStart = frameIdx;

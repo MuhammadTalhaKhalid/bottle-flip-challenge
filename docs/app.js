@@ -228,7 +228,15 @@ async function tick() {
 }
 
 function newGame() {
-  session = new FlipSession(ASSUMED_FPS, currentConfig(), classifyLanding);
+  // Use the MEASURED processing rate, not a fixed guess. The engine converts its
+  // "seconds" constants (settleSecs, lookbackSecs, readySecs) to frame counts via
+  // this fps. Hard-coding 12 while the phone really runs ~3-5 fps inflated every
+  // wait ~3x — that's the "flip → ~5s → verdict" latency the client reported, and
+  // it also stretched the classify window. fpsEMA is warm by Start Challenge
+  // (the preview loop runs detection every frame). Clamp to a sane band so a cold
+  // or spiky estimate can't produce degenerate frame counts.
+  const fps = Math.min(30, Math.max(3, Math.round(fpsEMA)));
+  session = new FlipSession(fps, currentConfig(), classifyLanding);
   frameIdx = 0; flash = null; flashLeft = 0;
   hctx.clearRect(0, 0, els.hud.width, els.hud.height);
 }
