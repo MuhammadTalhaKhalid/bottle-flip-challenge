@@ -34,15 +34,43 @@ let session = null;          // FlipSession
 let running = false, frameIdx = 0, busy = false;
 let flash = null, flashLeft = 0;
 let lastT = 0, fpsEMA = ASSUMED_FPS;
+// setup-gate state: the challenge can't start until the bottle is framed like the
+// training data (close enough + centered + held steady). This keeps the live input
+// in-distribution — the single biggest lever on landing-classification accuracy.
+let gateReady = false, setupRun = 0;
 // timed-challenge state: a countdown round that ends and shows a final score.
 let challenge = { active: false, finished: false, endsAt: 0, remaining: 30, duration: 30, finalFlips: 0 };
 
 function setStatus(msg) { els.status.textContent = msg; }
 
+// Live framing check for the preview (before a round). Purpose-built + stateless
+// (no sticky "passed" flag) so it reflects the CURRENT frame and re-locks if the
+// user drifts out of position. Mirrors engine._checkGate's thresholds so setup
+// matches how the model was trained. Returns { ready, msg }.
+function evalSetup(pick, nBottles, vw) {
+  const c = DEFAULT_CONFIG;
+  if (els.gate.value === "soft") {           // "most fun" — no positioning gate
+    return { ready: !!pick, msg: pick ? "Tap 🏁 Start Challenge" : "Show the bottle" };
+  }
+  if (!pick) { setupRun = 0; return { ready: false, msg: "Show the bottle" }; }
+  if (nBottles > 1) { setupRun = 0; return { ready: false, msg: "Only one bottle in frame" }; }
+  const cxFrac = pick.cx / vw;
+  if (pick.boxFrac < c.minBoxFrac) { setupRun = 0; return { ready: false, msg: "Move closer" }; }
+  if (pick.boxFrac > c.maxBoxFrac) { setupRun = 0; return { ready: false, msg: "Move back" }; }
+  if (Math.abs(cxFrac - 0.5) > c.centerTol) { setupRun = 0; return { ready: false, msg: "Center the bottle" }; }
+  setupRun += 1;
+  const fps = Math.min(30, Math.max(3, Math.round(fpsEMA)));
+  if (setupRun >= Math.round(c.readySecs * fps)) return { ready: true, msg: "READY ✓ — tap Start" };
+  return { ready: false, msg: "Hold steady…" };
+}
+
 function currentConfig() {
   return {
     ...DEFAULT_CONFIG,
-    gateMode: els.gate.value,
+    // Framing is enforced BEFORE the round starts (evalSetup gates the Start
+    // button). During the round we run soft so every flip counts and nothing
+    // blocks mid-air — the gate's job is setup, not interrupting gameplay.
+    gateMode: "soft",
     confFloor: parseFloat(els.conf.value),
     maxTries: 9999,   // timed mode: the countdown ends the round, not a tries cap
   };
@@ -100,6 +128,19 @@ function drawHud(out) {
   hctx.clearRect(0, 0, W, H);
   const sx = W / (els.video.videoWidth || W);
   const sy = H / (els.video.videoHeight || H);
+
+  // setup target zone — the band the bottle must sit in to match the training
+  // framing. Turns green when READY. Shown only during pre-round setup.
+  if (out.showZone) {
+    const c = DEFAULT_CONFIG;
+    const x0 = (0.5 - c.centerTol) * W, x1 = (0.5 + c.centerTol) * W;
+    const y0 = 0.12 * H, y1 = 0.92 * H;
+    hctx.lineWidth = 3;
+    hctx.setLineDash([12, 10]);
+    hctx.strokeStyle = out.gateOk ? "#50dc78" : "#fac83c";
+    hctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+    hctx.setLineDash([]);
+  }
 
   // bottle box
   if (out.bottleBox) {
@@ -208,9 +249,13 @@ async function tick() {
         drawHud(out);
         frameIdx += 1;
       } else {
-        // camera live, round not started yet — show preview box + prompt
-        drawHud({ flips: 0, state: "READY", gateOk: !!pick, bottleBox: box,
-                  message: pick ? "Tap 🏁 Start Challenge" : "Show the bottle" });
+        // camera live, round not started yet — coach the user into training-like
+        // framing and only unlock Start Challenge once they're READY.
+        const setup = evalSetup(pick, nBottles, vw);
+        gateReady = setup.ready;
+        els.newgame.disabled = !gateReady;
+        drawHud({ flips: 0, state: "SETUP", gateOk: gateReady, bottleBox: box,
+                  message: setup.msg, showZone: els.gate.value !== "soft" });
       }
     }
 
@@ -244,6 +289,20 @@ function newGame() {
 // Begin (or restart) a timed round: fresh score + a countdown that ends it.
 function startChallenge() {
   if (!running) { setStatus("Start the camera first."); return; }
+  // "Play Again" after a round: don't start unframed — drop back to the live
+  // setup preview so the gate re-arms and the user re-frames first.
+  if (challenge.finished) {
+    challenge.finished = false;
+    gateReady = false; setupRun = 0;
+    els.newgame.textContent = "🏁 Start Challenge";
+    els.newgame.disabled = true;
+    setStatus("Re-frame the bottle in the box to unlock Start.");
+    return;
+  }
+  if (!gateReady) {
+    setStatus("Frame the bottle in the box first (move closer / center / hold steady).");
+    return;
+  }
   newGame();
   challenge.duration = parseInt(els.timerSel.value, 10);
   challenge.remaining = challenge.duration;
@@ -294,9 +353,11 @@ async function startCamera() {
     challenge.duration = parseInt(els.timerSel.value, 10);
     challenge.remaining = challenge.duration;
     running = true;
+    gateReady = false; setupRun = 0;
     els.start.textContent = "⏹ Stop";
     els.newgame.textContent = "🏁 Start Challenge";
-    setStatus("Front camera live — frame the bottle, then tap Start Challenge.");
+    els.newgame.disabled = true;   // unlocks once framing is READY (see tick)
+    setStatus("Front camera live — frame the bottle low & centered to unlock Start.");
     requestAnimationFrame(tick);
   } catch (e) {
     setStatus("Camera blocked. Allow camera access and reload. " + e.message);
@@ -309,8 +370,10 @@ function stopCamera() {
   const s = els.video.srcObject;
   if (s) s.getTracks().forEach((t) => t.stop());
   els.video.srcObject = null;
+  gateReady = false; setupRun = 0;
   els.start.textContent = "▶ Start camera";
   els.newgame.textContent = "🏁 Start Challenge";
+  els.newgame.disabled = true;
   hctx.clearRect(0, 0, els.hud.width, els.hud.height);
   setStatus("Stopped.");
 }
@@ -345,7 +408,10 @@ els.timerSel.addEventListener("change", () => {
   challenge.duration = parseInt(els.timerSel.value, 10);
   if (!challenge.active) challenge.remaining = challenge.duration;
 });
-els.gate.addEventListener("change", () => { if (session && !challenge.active) newGame(); });
+els.gate.addEventListener("change", () => {
+  // re-arm the setup gate so the preview re-evaluates under the new mode
+  if (!challenge.active) { setupRun = 0; gateReady = false; els.newgame.disabled = running; }
+});
 window.addEventListener("resize", () => { if (running) fitHud(); });
 
 els.start.disabled = true;
