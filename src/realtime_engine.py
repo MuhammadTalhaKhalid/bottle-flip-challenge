@@ -55,6 +55,21 @@ class SessionConfig:
     throw_speed: float = 28.0        # px/frame peak speed => a real throw
     lookback_secs: float = 1.8
     yolo_conf: float = 0.20
+    # stillness threshold is size-aware: 7 px/frame works for the trained framing
+    # (bottle small/far), but a bottle CLOSE to the camera is large on-screen so the
+    # same hand jitter spans more pixels and never drops below 7 -> it never registers
+    # as "settled" -> the landing is never judged (the "close flips aren't detected"
+    # report). We scale the threshold up only when box_frac exceeds still_box_ref, so
+    # normal/far framing is UNCHANGED (== still_motion) and only close bottles loosen.
+    still_motion: float = 7.0        # base stillness threshold (px/frame)
+    still_box_ref: float = 0.50      # box_frac at/below which threshold == still_motion
+    # a thrown attempt that never comes to rest within this long did NOT stay standing:
+    # judge it anyway so failed flips get a verdict instead of silently showing nothing
+    # (the "failed flips show no result" report). The classifier still decides the label.
+    # 3.5s (vs 2.5) lets a slow-settling SUCCESS reach the normal settle-judge first,
+    # cutting false-FAILs on real successes (A/B: 3 -> 1 of 65) at the cost of ~1s more
+    # latency on fails that never settle (which don't affect the score anyway).
+    max_attempt_secs: float = 3.5
 
 
 class FlipSession:
@@ -84,6 +99,7 @@ class FlipSession:
         self.win_motion = deque(maxlen=L)
         self.win_detected = deque(maxlen=L)
         self.settle_frames = max(1, int(config.settle_secs * fps))
+        self.max_attempt_frames = max(1, int(config.max_attempt_secs * fps))
         self.still_run = 0
         self.judged = True
         self.throw_start = None
@@ -154,6 +170,44 @@ class FlipSession:
         self.motion_hist.append(d)
         return float(np.mean(self.motion_hist))
 
+    def _judge(self, start, frame_idx):
+        """Classify the [start..frame_idx] window and record one judged attempt.
+        Returns the event dict, or None if no real throw happened (nothing counts).
+        Shared by the settle path and the never-settled finalize path."""
+        recent = [m for m in self.win_motion if m >= 0]
+        peak = max(recent) if recent else 0.0
+        blur = sum(1 for d in self.win_detected if d == 0)
+        threw = peak >= self.cfg.throw_speed or blur >= 2
+        if not (threw or not self.cfg.require_throw):
+            return None
+        p = self._classify(start, frame_idx)
+        success = p >= self.cfg.conf_floor
+        if success:
+            self.flips += 1
+        self.tries_used += 1
+        verdict = "SUCCESS" if success else "FAIL"
+        ev = {"try": self.tries_used, "verdict": verdict,
+              "p_success": round(p, 4),
+              "start_s": round(start / self.fps, 2),
+              "end_s": round(frame_idx / self.fps, 2)}
+        self.events.append(ev)
+        self.last_verdict = (verdict, p, int(1.4 * self.fps))
+        if self.tries_used >= self.cfg.max_tries:
+            self.finished = True
+        return ev
+
+    def finalize(self, frame_idx):
+        """Judge a still-pending attempt at the end of a round/clip. Without this,
+        a failed flip that the clip/round ends on (bottle never came to rest) would
+        silently show no verdict. Returns the event dict or None."""
+        if self.finished or self.judged or self.throw_start is None:
+            return None
+        ev = self._judge(self.throw_start, frame_idx)
+        self.judged = True
+        self.throw_start = None
+        self.still_run = 0
+        return ev
+
     @torch.no_grad()
     def _classify(self, s_idx, e_idx):
         frames = [sf for (fi, sf) in self.small_buf if s_idx <= fi <= e_idx]
@@ -218,7 +272,10 @@ class FlipSession:
             motion = self._motion(center)
             self.win_motion.append(motion)
             self.win_detected.append(1)
-            if motion < 7.0:
+            box_frac = pick[4]
+            still_thresh = self.cfg.still_motion * max(
+                1.0, box_frac / self.cfg.still_box_ref)
+            if motion < still_thresh:
                 self.still_run += 1
             else:
                 if self.judged or self.throw_start is None:
@@ -230,31 +287,27 @@ class FlipSession:
 
             # landing reached -> judge once
             if self.still_run >= self.settle_frames and not self.judged:
-                recent = [m for m in self.win_motion if m >= 0]
-                peak = max(recent) if recent else 0.0
-                blur = sum(1 for d in self.win_detected if d == 0)
-                threw = peak >= self.cfg.throw_speed or blur >= 2
                 start = self.throw_start if self.throw_start is not None else \
                     max(0, frame_idx - int(self.cfg.lookback_secs * self.fps))
-
-                if threw or not self.cfg.require_throw:
-                    p = self._classify(start, frame_idx)
-                    success = p >= self.cfg.conf_floor
-                    if success:
-                        self.flips += 1
-                    self.tries_used += 1
-                    verdict = "SUCCESS" if success else "FAIL"
-                    t0, t1 = start / self.fps, frame_idx / self.fps
-                    ev = {"try": self.tries_used, "verdict": verdict,
-                          "p_success": round(p, 4),
-                          "start_s": round(t0, 2), "end_s": round(t1, 2)}
-                    self.events.append(ev)
+                ev = self._judge(start, frame_idx)
+                if ev is not None:
                     out["verdict"] = ev
-                    self.last_verdict = (verdict, p, int(1.4 * self.fps))
-                    if self.tries_used >= self.cfg.max_tries:
-                        self.finished = True
                 self.judged = True
                 self.throw_start = None
+
+        # a thrown attempt that never comes to rest = a failed flip that would
+        # otherwise show nothing. Once it has been in flight longer than a real
+        # flip could take, judge it now so the user still gets a verdict. Runs for
+        # both branches (bottle rolling in-frame OR thrown out of frame).
+        if (not self.judged and self.throw_start is not None
+                and self.still_run < self.settle_frames
+                and frame_idx - self.throw_start >= self.max_attempt_frames):
+            ev = self._judge(self.throw_start, frame_idx)
+            if ev is not None and out["verdict"] is None:
+                out["verdict"] = ev
+            self.judged = True
+            self.throw_start = None
+            self.still_run = 0
 
         out["flips"] = self.flips
         out["tries_used"] = self.tries_used

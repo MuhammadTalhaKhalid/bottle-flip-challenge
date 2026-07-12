@@ -5,7 +5,7 @@
  * offline. The large, rarely-changing model files (*.onnx, ~27 MB) stay
  * CACHE-FIRST so they load instantly and work offline after the first visit.
  */
-const CACHE = "bottleflip-v7";
+const CACHE = "bottleflip-v8";
 const ASSETS = [
   "./", "./index.html", "./styles.css", "./app.js", "./engine.js", "./yolo.js",
   "./manifest.webmanifest",

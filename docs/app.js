@@ -314,10 +314,16 @@ function startChallenge() {
   setStatus(`Go! ${challenge.duration}s — flip as many as you can!`);
 }
 
-function finishChallenge() {
+async function finishChallenge() {
   challenge.active = false;
   challenge.finished = true;
   challenge.finalFlips = session ? session.flips : 0;
+  // judge a last flip the round ended on that never settled, so it still counts /
+  // shows a verdict instead of silently vanishing, then refresh the shown score.
+  if (session) {
+    try { await session.finalize(frameIdx); challenge.finalFlips = session.flips; }
+    catch (e) { console.error(e); }
+  }
   els.newgame.textContent = "🏁 Play Again";
   setStatus(`Time! Final score: ${challenge.finalFlips} flip${challenge.finalFlips === 1 ? "" : "s"}.`);
 }

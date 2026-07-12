@@ -134,6 +134,8 @@ def main():
             draw(frame, st, cfg, fps, vstate)
             writer.write(frame)
             fi += 1
+        # clip ended — judge a flip that never settled (else a fail shows no verdict)
+        sess.finalize(max(0, fi - 1))
         cap.release()
         writer.release()
 

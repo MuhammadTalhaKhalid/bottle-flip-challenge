@@ -36,6 +36,21 @@ export const DEFAULT_CONFIG = {
   throwSpeed: 28.0,        // px/frame peak speed => a real throw
   lookbackSecs: 1.8,       // window collected for the landing classifier
   yoloConf: 0.20,          // bottle-detection confidence
+  // Stillness threshold is size-aware. 7 px/frame fits the trained framing (bottle
+  // small/far), but a bottle CLOSE to the camera is large on-screen, so the same
+  // hand jitter spans more pixels and never drops below 7 -> it never registers as
+  // "settled" -> the landing is never judged ("close flips aren't detected"). Scale
+  // the threshold up only once boxFrac passes stillBoxRef, so normal/far framing is
+  // UNCHANGED (== stillMotion) and only close bottles loosen.
+  stillMotion: 7.0,        // base stillness threshold (px/frame)
+  stillBoxRef: 0.50,       // boxFrac at/below which threshold == stillMotion
+  // A thrown attempt that never comes to rest within this long did NOT stay
+  // standing: judge it anyway so failed flips get a verdict instead of silently
+  // showing nothing ("failed flips show no result"). The classifier still labels it.
+  // 3.5s (vs 2.5) lets a slow-settling SUCCESS reach the normal settle-judge first,
+  // cutting false-FAILs on real successes (A/B: 3 -> 1 of 65) for ~1s more latency on
+  // fails that never settle (which don't affect the score anyway).
+  maxAttemptSecs: 3.5,
 };
 
 function pushCapped(arr, v, max) {
@@ -65,6 +80,7 @@ export class FlipSession {
     this.winMotion = [];                // maxlen L
     this.winDetected = [];              // maxlen L
     this.settleFrames = Math.max(1, Math.round(config.settleSecs * fps));
+    this.maxAttemptFrames = Math.max(1, Math.round(config.maxAttemptSecs * fps));
     this.stillRun = 0;
     this.judged = true;
     this.throwStart = null;
@@ -111,6 +127,42 @@ export class FlipSession {
       return [true, "READY"];
     }
     return [false, "Hold steady..."];
+  }
+
+  // Classify the [sIdx..eIdx] window and record one judged attempt. Returns the
+  // event, or null if no real throw happened. Shared by the settle path and the
+  // never-settled finalize path.
+  async _judge(start, frameIdx) {
+    const recent = this.winMotion.filter((m) => m >= 0);
+    const peak = recent.length ? Math.max(...recent) : 0.0;
+    const blur = this.winDetected.filter((d) => d === 0).length;
+    const threw = peak >= this.cfg.throwSpeed || blur >= 2;
+    if (!(threw || !this.cfg.requireThrow)) return null;
+    const p = await this._classify(start, frameIdx);
+    const success = p >= this.cfg.confFloor;
+    if (success) this.flips += 1;
+    this.triesUsed += 1;
+    const verdict = success ? "SUCCESS" : "FAIL";
+    const ev = {
+      try: this.triesUsed, verdict, pSuccess: Math.round(p * 1e4) / 1e4,
+      startS: Math.round((start / this.fps) * 100) / 100,
+      endS: Math.round((frameIdx / this.fps) * 100) / 100,
+    };
+    this.events.push(ev);
+    this.lastVerdict = [verdict, p, Math.round(1.4 * this.fps)];
+    if (this.triesUsed >= this.cfg.maxTries) this.finished = true;
+    return ev;
+  }
+
+  // Judge a still-pending attempt when a round ends. Without this, a failed flip the
+  // round ends on (bottle never came to rest) would show no verdict. Returns ev|null.
+  async finalize(frameIdx) {
+    if (this.finished || this.judged || this.throwStart === null) return null;
+    const ev = await this._judge(this.throwStart, frameIdx);
+    this.judged = true;
+    this.throwStart = null;
+    this.stillRun = 0;
+    return ev;
   }
 
   async _classify(sIdx, eIdx) {
@@ -169,9 +221,12 @@ export class FlipSession {
       const motion = this._motion(center);
       pushCapped(this.winMotion, motion, this.L);
       pushCapped(this.winDetected, 1, this.L);
-      if (motion < 7.0) {   // validated stillness threshold (realtime_engine.py).
-                            // DeepSeek lowered this to 5.0, making handheld jitter
-                            // read as "not still" and skewing the landing window.
+      // validated stillness threshold (realtime_engine.py), made size-aware: it is
+      // exactly stillMotion (7.0) for normal/far framing (boxFrac <= stillBoxRef)
+      // and only scales up for a close, large bottle so it can still settle.
+      const stillThresh = this.cfg.stillMotion *
+        Math.max(1.0, pick.boxFrac / this.cfg.stillBoxRef);
+      if (motion < stillThresh) {
         this.stillRun += 1;
       } else {
         if (this.judged || this.throwStart === null) this.throwStart = frameIdx;
@@ -183,32 +238,27 @@ export class FlipSession {
 
       // landing reached -> judge once
       if (this.stillRun >= this.settleFrames && !this.judged) {
-        const recent = this.winMotion.filter((m) => m >= 0);
-        const peak = recent.length ? Math.max(...recent) : 0.0;
-        const blur = this.winDetected.filter((d) => d === 0).length;
-        const threw = peak >= this.cfg.throwSpeed || blur >= 2;
         const start = this.throwStart !== null ? this.throwStart
           : Math.max(0, frameIdx - Math.round(this.cfg.lookbackSecs * this.fps));
-
-        if (threw || !this.cfg.requireThrow) {
-          const p = await this._classify(start, frameIdx);
-          const success = p >= this.cfg.confFloor;
-          if (success) this.flips += 1;
-          this.triesUsed += 1;
-          const verdict = success ? "SUCCESS" : "FAIL";
-          const ev = {
-            try: this.triesUsed, verdict, pSuccess: Math.round(p * 1e4) / 1e4,
-            startS: Math.round((start / this.fps) * 100) / 100,
-            endS: Math.round((frameIdx / this.fps) * 100) / 100,
-          };
-          this.events.push(ev);
-          out.verdict = ev;
-          this.lastVerdict = [verdict, p, Math.round(1.4 * this.fps)];
-          if (this.triesUsed >= this.cfg.maxTries) this.finished = true;
-        }
+        const ev = await this._judge(start, frameIdx);
+        if (ev) out.verdict = ev;
         this.judged = true;
         this.throwStart = null;
       }
+    }
+
+    // A thrown attempt that never comes to rest = a failed flip that would otherwise
+    // show nothing. Once it has been in flight longer than a real flip could take,
+    // judge it now so the user still gets a verdict. Runs whether the bottle is
+    // rolling in-frame or was thrown out of frame.
+    if (!this.judged && this.throwStart !== null
+        && this.stillRun < this.settleFrames
+        && frameIdx - this.throwStart >= this.maxAttemptFrames) {
+      const ev = await this._judge(this.throwStart, frameIdx);
+      if (ev && !out.verdict) out.verdict = ev;
+      this.judged = true;
+      this.throwStart = null;
+      this.stillRun = 0;
     }
 
     out.flips = this.flips;
